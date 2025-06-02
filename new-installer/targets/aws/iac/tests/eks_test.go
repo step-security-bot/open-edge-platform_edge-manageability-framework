@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"testing"
+	"time"
 
 	terra_test_aws "github.com/gruntwork-io/terratest/modules/aws"
 	"github.com/gruntwork-io/terratest/modules/terraform"
@@ -65,14 +67,19 @@ type EKSVariables struct {
 	HTTPProxy               string                  `json:"http_proxy"`
 	HTTPSProxy              string                  `json:"https_proxy"`
 	NoProxy                 string                  `json:"no_proxy"`
+	IPAllowList             []string                `json:"ip_allow_list"`
 }
 
 type EKSTestSuite struct {
 	suite.Suite
 	stateBucketName string
 	vpcID           string
-	subnetID        string
+	subnetIDs       []string
 	randomPostfix   string
+}
+
+func TestEKSTestSuite(t *testing.T) {
+	suite.Run(t, new(EKSTestSuite))
 }
 
 func (s *EKSTestSuite) SetupTest() {
@@ -80,14 +87,10 @@ func (s *EKSTestSuite) SetupTest() {
 	s.randomPostfix = strings.ToLower(rand.Text()[:8])
 	s.stateBucketName = "test-bucket-" + s.randomPostfix
 	terra_test_aws.CreateS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
-	defer func() {
-		terra_test_aws.EmptyS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
-		terra_test_aws.DeleteS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
-	}()
 
 	// VPC and subnets for EKS
 	var err error
-	s.vpcID, s.subnetID, err = CreateVPC(DefaultRegion)
+	s.vpcID, s.subnetIDs, err = CreateVPC(DefaultRegion)
 	if err != nil {
 		s.NoError(err, "Failed to create VPC and subnet")
 	}
@@ -96,27 +99,28 @@ func (s *EKSTestSuite) SetupTest() {
 func (s *EKSTestSuite) TearDownTest() {
 	// Remove VPC, Subnet, and S3 bucket
 	// Note: Deleting a VPC will also delete all subnets.
-	err := DeleteVPC(DefaultRegion, s.vpcID)
-	if err != nil {
-		s.NoError(err, "Failed to delete VPC %s", s.vpcID)
+	for i := 0; i < 5; i++ {
+		time.Sleep(10 * time.Second)
+		err := DeleteVPC(DefaultRegion, s.vpcID)
+		if err == nil {
+			break
+		}
+		if i == 4 {
+			s.NoError(err, "Failed to delete VPC %s after 5 attempts", s.vpcID)
+			break
+		}
 	}
 	terra_test_aws.EmptyS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
 	terra_test_aws.DeleteS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
 }
 
 func (s *EKSTestSuite) TestApplyingModule() {
-	backendConfig := AWSS3BackendConfig{
-		Region: DefaultRegion,
-		Bucket: s.stateBucketName,
-		Key:    "eks.tfstate",
-	}
-
 	eksVars := EKSVariables{
 		Name:                "test-eks-cluster" + s.randomPostfix,
 		Region:              DefaultRegion,
 		VPCID:               s.vpcID,
 		CustomerTag:         "test-customer",
-		SubnetIDs:           []string{s.subnetID},
+		SubnetIDs:           s.subnetIDs,
 		EKSVersion:          "1.32",
 		NodeInstanceType:    "t3.medium",
 		DesiredSize:         1,
@@ -145,6 +149,8 @@ func (s *EKSTestSuite) TestApplyingModule() {
 				Version: "v2.1.4-eksbuild.1",
 			},
 		},
+		AdditionalNodeGroups: map[string]EKSNodeGroup{},
+		IPAllowList:          []string{},
 	}
 
 	jsonData, err := json.Marshal(eksVars)

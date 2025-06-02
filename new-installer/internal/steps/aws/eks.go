@@ -65,6 +65,7 @@ type EKSVariables struct {
 	HTTPProxy               string                  `json:"http_proxy"`
 	HTTPSProxy              string                  `json:"https_proxy"`
 	NoProxy                 string                  `json:"no_proxy"`
+	IPAllowList             []string                `json:"ip_allow_list"`
 }
 
 type AWSEKSStep struct {

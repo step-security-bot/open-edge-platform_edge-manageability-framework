@@ -20,10 +20,10 @@ type AWSS3BackendConfig struct {
 	Key    string `json:"key"`
 }
 
-func CreateVPC(region string) (string, string, error) {
+func CreateVPC(region string) (string, []string, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
 	if err != nil {
-		return "", "", fmt.Errorf("unable to load AWS SDK config: %w", err)
+		return "", nil, fmt.Errorf("unable to load AWS SDK config: %w", err)
 	}
 	ec2Client := ec2.NewFromConfig(cfg)
 	createVpcInput := &ec2.CreateVpcInput{
@@ -31,21 +31,30 @@ func CreateVPC(region string) (string, string, error) {
 	}
 	vpcOutput, err := ec2Client.CreateVpc(context.Background(), createVpcInput)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create VPC: %w", err)
+		return "", nil, fmt.Errorf("failed to create VPC: %w", err)
 	}
 	vpcID := *vpcOutput.Vpc.VpcId
 	log.Printf("Created VPC with ID: %s", vpcID)
-	createSubnetInput := &ec2.CreateSubnetInput{
-		CidrBlock: aws.String("10.250.0.0/24"),
-		VpcId:     aws.String(vpcID),
+
+	subnetIDs := []string{}
+	availabilityZones := []string{"a", "b", "c"}
+	for i, zone := range availabilityZones {
+		cidrBlock := fmt.Sprintf("10.250.%d.0/24", i)
+		createSubnetInput := &ec2.CreateSubnetInput{
+			CidrBlock:        aws.String(cidrBlock),
+			VpcId:            aws.String(vpcID),
+			AvailabilityZone: aws.String(region + zone),
+		}
+		subnetOutput, err := ec2Client.CreateSubnet(context.Background(), createSubnetInput)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to create subnet in zone %s: %w", zone, err)
+		}
+		subnetID := *subnetOutput.Subnet.SubnetId
+		log.Printf("Created Subnet with ID: %s in zone %s", subnetID, zone)
+		subnetIDs = append(subnetIDs, subnetID)
 	}
-	subnetOutput, err := ec2Client.CreateSubnet(context.Background(), createSubnetInput)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create subnet: %w", err)
-	}
-	subnetID := *subnetOutput.Subnet.SubnetId
-	log.Printf("Created Subnet with ID: %s", subnetID)
-	return vpcID, subnetID, nil
+
+	return vpcID, subnetIDs, nil
 }
 
 func DeleteVPC(region string, vpcID string) error {
