@@ -54,6 +54,7 @@ type OrchInstallerRuntimeState struct {
 	PrivateSubnetIDs         []string `yaml:"privateSubnetIDs"`
 	JumpHostSSHKeyPublicKey  string   `yaml:"jumpHostSSHPublicKey"`
 	JumpHostSSHKeyPrivateKey string   `yaml:"jumpHostSSHPrivateKey"`
+	EFSFileSystemID          string   `yaml:"efsFileSystemID"`
 }
 
 type OrchInstallerConfig struct {
