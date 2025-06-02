@@ -120,6 +120,7 @@ func (s *AWSEKSStep) ConfigStep(ctx context.Context, config config.OrchInstaller
 	s.variables.MaxPods = scaleSetup.General.MaxPods
 	s.variables.VolumeSize = scaleSetup.General.VolumeSize
 	s.variables.VolumeType = scaleSetup.General.VolumeType
+	s.variables.AdditionalNodeGroups = make(map[string]EKSNodeGroup)
 	s.variables.AdditionalNodeGroups["observability"] = scaleSetup.O11y
 	s.variables.EnableCacheRegistry = config.AWS.CacheRegistry != ""
 	s.variables.CacheRegistry = config.AWS.CacheRegistry
@@ -171,10 +172,13 @@ func mapScaleToAWSEKSSetup(scale config.Scale) EKSScaleSetup {
 	case config.Scale10:
 		return EKSScaleSetup{
 			General: EKSNodeGroup{
-				DesiredSize: 3,
-				MinSize:     3,
-				MaxSize:     3,
-				MaxPods:     58,
+				DesiredSize:  3,
+				MinSize:      3,
+				MaxSize:      3,
+				MaxPods:      58,
+				VolumeSize:   20,
+				VolumeType:   "gp3",
+				InstanceType: "t3.2xlarge",
 			},
 			O11y: EKSNodeGroup{
 				DesiredSize: 1,
@@ -197,11 +201,13 @@ func mapScaleToAWSEKSSetup(scale config.Scale) EKSScaleSetup {
 	case config.Scale100:
 		return EKSScaleSetup{
 			General: EKSNodeGroup{
-				DesiredSize: 3,
-				MinSize:     3,
-				MaxSize:     3,
-				MaxPods:     58,
-				VolumeSize:  128,
+				DesiredSize:  3,
+				MinSize:      3,
+				MaxSize:      3,
+				MaxPods:      58,
+				VolumeSize:   128,
+				VolumeType:   "gp3",
+				InstanceType: "t3.2xlarge",
 			},
 			O11y: EKSNodeGroup{
 				DesiredSize: 1,
@@ -224,11 +230,13 @@ func mapScaleToAWSEKSSetup(scale config.Scale) EKSScaleSetup {
 	case config.Scale500:
 		return EKSScaleSetup{
 			General: EKSNodeGroup{
-				DesiredSize: 3,
-				MinSize:     3,
-				MaxSize:     3,
-				MaxPods:     58,
-				VolumeSize:  128,
+				DesiredSize:  3,
+				MinSize:      3,
+				MaxSize:      3,
+				MaxPods:      58,
+				VolumeSize:   128,
+				VolumeType:   "gp3",
+				InstanceType: "t3.2xlarge",
 			},
 			O11y: EKSNodeGroup{
 				DesiredSize: 2,
@@ -251,11 +259,13 @@ func mapScaleToAWSEKSSetup(scale config.Scale) EKSScaleSetup {
 	case config.Scale1000:
 		return EKSScaleSetup{
 			General: EKSNodeGroup{
-				DesiredSize: 3,
-				MinSize:     3,
-				MaxSize:     3,
-				MaxPods:     58,
-				VolumeSize:  128,
+				DesiredSize:  3,
+				MinSize:      3,
+				MaxSize:      3,
+				MaxPods:      58,
+				VolumeSize:   128,
+				VolumeType:   "gp3",
+				InstanceType: "t3.2xlarge",
 			},
 			O11y: EKSNodeGroup{
 				DesiredSize: 2,
