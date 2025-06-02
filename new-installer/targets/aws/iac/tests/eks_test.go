@@ -1,0 +1,179 @@
+// SPDX-FileCopyrightText: 2025 Intel Corporation
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package aws_iac_test
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"os"
+	"strings"
+
+	terra_test_aws "github.com/gruntwork-io/terratest/modules/aws"
+	"github.com/gruntwork-io/terratest/modules/terraform"
+	"github.com/stretchr/testify/suite"
+)
+
+const (
+	DefaultRegion = "us-west-2"
+)
+
+type EKSAddOn struct {
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	ConfigurationValues string `json:"configuration_values"`
+}
+
+type EKSNodeGroup struct {
+	DesiredSize  int                 `json:"desired_size"`
+	MinSize      int                 `json:"min_size"`
+	MaxSize      int                 `json:"max_size"`
+	MaxPods      int                 `json:"max_pods,omitempty"`
+	Taints       map[string]EKSTaint `json:"taints"`
+	Labels       map[string]string   `json:"labels"`
+	InstanceType string              `json:"instance_type"`
+	VolumeSize   int                 `json:"volume_size"`
+	VolumeType   string              `json:"volume_type"`
+}
+
+type EKSTaint struct {
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
+}
+
+type EKSVariables struct {
+	Name                    string                  `json:"name"`
+	Region                  string                  `json:"region"`
+	VPCID                   string                  `json:"vpc_id"`
+	CustomerTag             string                  `json:"customer_tag"`
+	SubnetIDs               []string                `json:"subnet_ids"`
+	EKSVersion              string                  `json:"eks_version"`
+	VolumeSize              int                     `json:"volume_size"`
+	VolumeType              string                  `json:"volume_type"`
+	NodeInstanceType        string                  `json:"node_instance_type"`
+	DesiredSize             int                     `json:"desired_size"`
+	MinSize                 int                     `json:"min_size"`
+	MaxSize                 int                     `json:"max_size"`
+	AddOns                  []EKSAddOn              `json:"add_ons"`
+	MaxPods                 int                     `json:"max_pods"`
+	AdditionalNodeGroups    map[string]EKSNodeGroup `json:"additional_node_groups"`
+	EnableCacheRegistry     bool                    `json:"enable_cache_registry"`
+	CacheRegistry           string                  `json:"cache_registry"`
+	UserScriptPreCloudInit  string                  `json:"user_script_pre_cloud_init"`
+	UserScriptPostCloudInit string                  `json:"user_script_post_cloud_init"`
+	HTTPProxy               string                  `json:"http_proxy"`
+	HTTPSProxy              string                  `json:"https_proxy"`
+	NoProxy                 string                  `json:"no_proxy"`
+}
+
+type EKSTestSuite struct {
+	suite.Suite
+	stateBucketName string
+	vpcID           string
+	subnetID        string
+	randomPostfix   string
+}
+
+func (s *EKSTestSuite) SetupTest() {
+	// Bucket for EKS state
+	s.randomPostfix = strings.ToLower(rand.Text()[:8])
+	s.stateBucketName = "test-bucket-" + s.randomPostfix
+	terra_test_aws.CreateS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
+	defer func() {
+		terra_test_aws.EmptyS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
+		terra_test_aws.DeleteS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
+	}()
+
+	// VPC and subnets for EKS
+	var err error
+	s.vpcID, s.subnetID, err = CreateVPC(DefaultRegion)
+	if err != nil {
+		s.NoError(err, "Failed to create VPC and subnet")
+	}
+}
+
+func (s *EKSTestSuite) TearDownTest() {
+	// Remove VPC, Subnet, and S3 bucket
+	// Note: Deleting a VPC will also delete all subnets.
+	err := DeleteVPC(DefaultRegion, s.vpcID)
+	if err != nil {
+		s.NoError(err, "Failed to delete VPC %s", s.vpcID)
+	}
+	terra_test_aws.EmptyS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
+	terra_test_aws.DeleteS3Bucket(s.T(), DefaultRegion, s.stateBucketName)
+}
+
+func (s *EKSTestSuite) TestApplyingModule() {
+	backendConfig := AWSS3BackendConfig{
+		Region: DefaultRegion,
+		Bucket: s.stateBucketName,
+		Key:    "eks.tfstate",
+	}
+
+	eksVars := EKSVariables{
+		Name:                "test-eks-cluster" + s.randomPostfix,
+		Region:              DefaultRegion,
+		VPCID:               s.vpcID,
+		CustomerTag:         "test-customer",
+		SubnetIDs:           []string{s.subnetID},
+		EKSVersion:          "1.32",
+		NodeInstanceType:    "t3.medium",
+		DesiredSize:         1,
+		MinSize:             1,
+		MaxSize:             1,
+		MaxPods:             58,
+		VolumeSize:          20,
+		VolumeType:          "gp3",
+		EnableCacheRegistry: true,
+		CacheRegistry:       "test-cache-registry",
+		HTTPProxy:           "",
+		HTTPSProxy:          "",
+		NoProxy:             "",
+		AddOns: []EKSAddOn{
+			{
+				Name:    "aws-ebs-csi-driver",
+				Version: "v1.39.0-eksbuild.1",
+			},
+			{
+				Name:                "vpc-cni",
+				Version:             "v1.19.2-eksbuild.1",
+				ConfigurationValues: "{\"enableNetworkPolicy\": \"true\", \"nodeAgent\": {\"healthProbeBindAddr\": \"8163\", \"metricsBindAddr\": \"8162\"}}",
+			},
+			{
+				Name:    "aws-efs-csi-driver",
+				Version: "v2.1.4-eksbuild.1",
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(eksVars)
+	if err != nil {
+		s.T().Fatalf("Failed to marshal variables: %v", err)
+	}
+	tempFile, err := os.CreateTemp("", "variables-*.tfvar.json")
+	if err != nil {
+		s.T().Fatalf("Failed to create temporary file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+	if _, err := tempFile.Write(jsonData); err != nil {
+		s.T().Fatalf("Failed to write to temporary file: %v", err)
+	}
+
+	terraformOptions := terraform.WithDefaultRetryableErrors(s.T(), &terraform.Options{
+		TerraformDir: "../eks",
+		VarFiles:     []string{tempFile.Name()},
+		BackendConfig: map[string]interface{}{
+			"region": DefaultRegion,
+			"bucket": s.stateBucketName,
+			"key":    "eks.tfstate",
+		},
+		Reconfigure: true,
+		Upgrade:     true,
+	})
+
+	defer terraform.Destroy(s.T(), terraformOptions)
+	terraform.InitAndApply(s.T(), terraformOptions)
+
+	// No outputs from EKS module, so we just check if it applies successfully
+}
